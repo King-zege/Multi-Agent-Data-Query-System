@@ -68,7 +68,7 @@ class SQLQueryAgent(BaseSubAgent):
 
     @staticmethod
     def _llm_to_str(result) -> str:
-        """安全地从 LLM 返回值中提取文本，清理思考标签"""
+        """安全地从 LLM 返回值中提取文本，处理 Qwen 模型 think 标签"""
         import re
         if isinstance(result, str):
             text = result
@@ -78,8 +78,11 @@ class SQLQueryAgent(BaseSubAgent):
             text = str(result.text)
         else:
             text = str(result)
-        text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
-        text = re.sub(r'</think>', '', text).strip()
+        think_end = text.rfind('</think>')
+        if think_end != -1:
+            text = text[think_end + len('</think>'):].strip()
+        else:
+            text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
         return text
     
     def _get_schema(self) -> str:

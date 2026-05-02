@@ -59,7 +59,7 @@ class DataAnalysisAgent(BaseSubAgent):
 
     @staticmethod
     def _llm_to_str(result) -> str:
-        """安全地从 LLM 返回值中提取文本，清理思考标签"""
+        """安全地从 LLM 返回值中提取文本，处理 Qwen 模型 think 标签"""
         import re
         if isinstance(result, str):
             text = result
@@ -69,8 +69,11 @@ class DataAnalysisAgent(BaseSubAgent):
             text = str(result.text)
         else:
             text = str(result)
-        text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
-        text = re.sub(r'</think>', '', text).strip()
+        think_end = text.rfind('</think>')
+        if think_end != -1:
+            text = text[think_end + len('</think>'):].strip()
+        else:
+            text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
         return text
     
     def _parse_data(self, data_str: str) -> Optional[Any]:
@@ -86,9 +89,10 @@ class DataAnalysisAgent(BaseSubAgent):
             if len(data) == 0:
                 return "数据为空"
             
+            show_count = min(len(data), 10)
             summary = f"数据总数: {len(data)}条记录\n"
-            summary += "数据示例:\n"
-            for i, item in enumerate(data[:3]):
+            summary += f"数据示例（共{show_count}条）:\n"
+            for i, item in enumerate(data[:show_count]):
                 summary += f"  记录{i+1}: {json.dumps(item, ensure_ascii=False)}\n"
             
             if len(data) > 0 and isinstance(data[0], dict):

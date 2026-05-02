@@ -242,7 +242,11 @@ def get_summary_prompt(question: str, sql_result: str, analysis_result: str) -> 
 3. 结构清晰、易于理解
 4. 如果有多个要点，使用列表或分段展示
 
-不要重复显示原始JSON数据，而是用自然语言表达。"""
+重要提示：
+- 如果查询结果是列表数据（如员工名单、薪资排名），必须逐一列出所有记录（使用表格或编号列表），包括姓名、数值等关键字段
+- 不要用"共N条记录"一笔带过，用户期望看到具体数据
+- 列出数据后再提供分析洞察
+- 用自然语言表达，但关键数据（姓名、数字）必须完整保留"""
 
 
 def get_sql_correction_prompt(question: str, schema: str, original_sql: str, error_msg: str, attempt: int) -> str:

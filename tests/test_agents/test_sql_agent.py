@@ -143,3 +143,125 @@ class TestQueryExecution:
         result = sql_agent.query("")
         # 空问题也应该能生成 SQL（因为 FakeLLM 会匹配到关键词）
         # 如果 _generate_sql 返回空，result 应有 error
+
+
+class TestThinkTagHandling:
+    """测试 _llm_to_str 的 think 标签处理
+
+    验证 Qwen 模型输出中 <think>...</think> 不会误删正式回答内容。
+    """
+
+    def test_extracts_content_after_think(self):
+        """核心场景：数据在 </think> 之后 → 完整保留"""
+        from agents.sql_agent import SQLQueryAgent
+
+        llm_output = (
+            "<think>\n"
+            "需要列出薪资最高的10人：\n"
+            "1. 张三 - 25000\n"
+            "2. 李四 - 23000\n"
+            "...\n"
+            "</think>\n"
+            "根据查询结果，以下是薪资最高的10名员工：\n"
+            "1. 张三 - 研发部 - 25,000元\n"
+            "2. 李四 - 市场部 - 23,000元\n"
+        )
+        result = SQLQueryAgent._llm_to_str(llm_output)
+        assert "张三" in result
+        assert "李四" in result
+        assert "<think>" not in result
+        assert "需要列出薪资最高的10人" not in result  # think内容应被移除
+
+    def test_no_think_tags_unchanged(self):
+        """无 think 标签 → 原文保留"""
+        from agents.sql_agent import SQLQueryAgent
+
+        text = "SELECT * FROM employees WHERE dept_id = 1"
+        result = SQLQueryAgent._llm_to_str(text)
+        assert result == text
+
+    def test_thinking_before_data(self):
+        """思考在前，回答数据在后 → 数据完整保留"""
+        from agents.sql_agent import SQLQueryAgent
+
+        llm_output = (
+            "<think>分析数据中...</think>\n"
+            "1. 张三 - 25,000元\n"
+            "2. 李四 - 23,000元\n"
+            "3. 王五 - 15,000元\n"
+        )
+        result = SQLQueryAgent._llm_to_str(llm_output)
+        assert "张三" in result
+        assert "李四" in result
+        assert "王五" in result
+        assert "分析数据中" not in result
+
+    def test_object_with_content_attr(self):
+        """输入是有 .content 属性的对象 → 正确提取"""
+        from agents.sql_agent import SQLQueryAgent
+
+        class MockResponse:
+            def __init__(self, content):
+                self.content = content
+
+        resp = MockResponse(
+            "<think>reasoning</think>\n"
+            "薪资排名：\n"
+            "1. 张三 - 25000\n"
+        )
+        result = SQLQueryAgent._llm_to_str(resp)
+        assert "张三" in result
+        assert "reasoning" not in result
+
+    def test_object_with_text_attr(self):
+        """输入是有 .text 属性的对象 → 正确提取"""
+        from agents.sql_agent import SQLQueryAgent
+
+        class MockResponse:
+            def __init__(self, text):
+                self.text = text
+
+        resp = MockResponse(
+            "<think>x</think>\n"
+            "查询结果：共10人"
+        )
+        result = SQLQueryAgent._llm_to_str(resp)
+        assert "查询结果" in result
+        assert "x" not in result
+
+    def test_multiple_think_blocks_last_wins(self):
+        """多个 </think> → 取最后一个之后的内容（中间内容被丢弃）"""
+        from agents.sql_agent import SQLQueryAgent
+
+        llm_output = (
+            "<think>第一步</think>\n"
+            "中间内容\n"
+            "<think>第二步</think>\n"
+            "最终回答：这里有10名员工"
+        )
+        result = SQLQueryAgent._llm_to_str(llm_output)
+        assert "最终回答" in result
+        assert "第一步" not in result
+        assert "第二步" not in result
+        assert "中间内容" not in result  # 在最后一个 </think> 之前的内容都被丢弃
+
+    def test_think_without_closing_tag(self):
+        """只有 <think> 没有 </think> → 整个 <think>...</think> 块被移除"""
+        from agents.sql_agent import SQLQueryAgent
+
+        llm_output = (
+            "<think>\n"
+            "思考中...\n"
+        )
+        result = SQLQueryAgent._llm_to_str(llm_output)
+        # 由于没有 </think>，走 else 分支：regex 移除 <think>...</think>
+        # 但这里没有 closing tag，non-greedy regex 不会匹配到结尾
+        # 文本中 <think> 后面没有 </think>，regex 不匹配
+
+    def test_empty_after_think(self):
+        """</think> 之后无内容 → 返回空字符串"""
+        from agents.sql_agent import SQLQueryAgent
+
+        llm_output = "<think>全部内容都在思考里</think>"
+        result = SQLQueryAgent._llm_to_str(llm_output)
+        assert result == ""

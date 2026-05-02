@@ -70,9 +70,11 @@ class MasterAgent:
     @staticmethod
     def _llm_to_str(result) -> str:
         """安全地从 LLM 返回值中提取文本字符串
-        
+
         兼容 str / AIMessage / GenerationChunk 等多种返回类型。
-        自动清理思考型模型（如 qwen3.5-plus）的 <think>...</think> 标签。
+        处理 Qwen 模型的 <think>...</think> 标签：
+        - 优先提取 </think> 之后的内容（正式回答部分）
+        - 防止将回答内容误删（Qwen 可能把数据列表也放入 think 块）
         """
         import re
         if isinstance(result, str):
@@ -83,8 +85,13 @@ class MasterAgent:
             text = str(result.text)
         else:
             text = str(result)
-        text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
-        text = re.sub(r'</think>', '', text).strip()
+        # 优先提取 </think> 之后的内容（Qwen 模型的正式回答部分）
+        think_end = text.rfind('</think>')
+        if think_end != -1:
+            text = text[think_end + len('</think>'):].strip()
+        else:
+            # 没有 </think> 时，移除 <think>...</think> 块（如果有）
+            text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
         return text
     
     def __init__(self, llm: BaseLLM, db_path: str, num_examples: int = 3, 
@@ -854,21 +861,24 @@ class MasterAgent:
                             chunk_text = chunk.text
                         else:
                             chunk_text = str(chunk)
-                        
+
                         # 过滤 <think>...</think> 思考内容，不发送给前端
+                        # 采用 extract-after-</think> 策略：只丢弃 </think> 之前的内容
                         think_buffer += chunk_text
                         if '<think>' in think_buffer and not in_think:
                             in_think = True
                         if in_think:
-                            if '</think>' in think_buffer:
-                                cleaned = re.sub(r'<think>[\s\S]*?</think>', '', think_buffer).strip()
+                            think_end = think_buffer.rfind('</think>')
+                            if think_end != -1:
+                                # 提取 </think> 之后的内容（正式回答）
+                                cleaned = think_buffer[think_end + len('</think>'):].strip()
                                 if cleaned:
                                     final_answer += cleaned
                                     yield sse("chunk", content=cleaned)
                                 think_buffer = ""
                                 in_think = False
                             continue
-                        
+
                         think_buffer = ""
                         final_answer += chunk_text
                         yield sse("chunk", content=chunk_text)
