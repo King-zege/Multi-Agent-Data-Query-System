@@ -1,12 +1,13 @@
 """
 SQL查询子智能体
 
-负责将自然语言转换为SQL并执行查询，支持自动纠错循环（最多3次重试）。
+负责将自然语言转换为SQL并执行查询，支持自动纠错循环（最多2次重试）。
 Reflection 模式：执行失败时将错误信息反馈给 LLM 重新生成。
+
+通过 MCP 子进程执行 SQL 和获取 Schema，支持 SQLite / MySQL / PostgreSQL。
 """
 
 import json
-import sqlite3
 import sys
 import asyncio
 import concurrent.futures
@@ -26,22 +27,30 @@ logger = get_logger(__name__)
 
 
 class SQLQueryAgent(BaseSubAgent):
-    """SQL查询子智能体，支持自动纠错循环（ReAct/Reflection 模式）"""
+    """SQL查询子智能体，支持自动纠错循环（ReAct/Reflection 模式）
+
+    通过 MCP 子进程执行 SQL，支持 SQLite / MySQL / PostgreSQL。
+    """
 
     intent_name = "sql_only"
     node_name = "call_sql"
 
-    def __init__(self, llm: BaseLLM, db_path: str, num_examples: int = 3):
+    def __init__(self, llm: BaseLLM, db_config: Dict[str, Any], num_examples: int = 3):
         """初始化SQL查询智能体
 
         Args:
             llm: 语言模型实例
-            db_path: 数据库路径
+            db_config: 数据库配置字典，格式：
+                {"type": "sqlite", "path": "./data/company.db"}
+                {"type": "mysql", "host": "...", "port": 3306, "database": "...",
+                 "username": "...", "password": "..."}
+                {"type": "postgresql", ...}
             num_examples: Few-shot示例数量
         """
         super().__init__(llm)
-        self.db_path = db_path
+        self.db_config = db_config
         self.num_examples = num_examples
+        self._schema_cache = None
 
     # ---- BaseSubAgent 接口 ----
 
@@ -54,7 +63,7 @@ class SQLQueryAgent(BaseSubAgent):
         state["sql_result"] = result
         state["metadata"]["sql_result"] = result
 
-        # 保存到会话数据（通过 metadata 传递引用）
+        # 保存到会话数据
         if "_session_data" not in state["metadata"]:
             state["metadata"]["_session_data"] = {}
         session_data = state["metadata"]["_session_data"]
@@ -84,36 +93,36 @@ class SQLQueryAgent(BaseSubAgent):
         else:
             text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
         return text
-    
+
     def _get_schema(self) -> str:
-        """获取数据库Schema"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-        """)
-        tables = cursor.fetchall()
-        
-        schema_text = ""
+        """获取数据库 Schema（通过 MCP get_schema 工具，不走直接连接）"""
+        if self._schema_cache is not None:
+            return self._schema_cache
+
+        schema_json = self._run_async(self._get_schema_via_mcp())
+        try:
+            tables = json.loads(schema_json)
+        except json.JSONDecodeError:
+            return "Schema 获取失败"
+
+        if isinstance(tables, dict) and "error" in tables:
+            return f"Schema 获取失败: {tables['error']}"
+
+        text = self._format_schema_text(tables)
+        self._schema_cache = text
+        return text
+
+    def _format_schema_text(self, tables: list) -> str:
+        """将 Schema JSON 转为 LLM prompt 友好文本"""
+        lines = []
         for table in tables:
-            table_name = table[0]
-            schema_text += f"\n表：{table_name}\n"
-            
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            columns = cursor.fetchall()
-            
-            for col in columns:
-                cid, name, dtype, notnull, default, pk = col
-                pk_text = " (主键)" if pk else ""
-                notnull_text = " NOT NULL" if notnull else ""
-                schema_text += f"  - {name}: {dtype}{notnull_text}{pk_text}\n"
-        
-        conn.close()
-        return schema_text.strip()
-    
+            lines.append(f"\n表：{table['name']}")
+            for col in table["columns"]:
+                pk = " (主键)" if col.get("primary_key") else ""
+                notnull = "" if col.get("nullable", True) else " NOT NULL"
+                lines.append(f"  - {col['name']}: {col['type']}{notnull}{pk}")
+        return "\n".join(lines).strip()
+
     def _clean_sql(self, sql: str) -> str:
         """清理SQL语句（移除代码块标记和多余前缀）"""
         sql = sql.strip()
@@ -121,18 +130,18 @@ class SQLQueryAgent(BaseSubAgent):
             sql = sql[6:]
         elif sql.startswith("```"):
             sql = sql[3:]
-        
+
         prefixes = ["SQL：", "SQL:", "sql:", "sql："]
         for prefix in prefixes:
             if sql.startswith(prefix):
                 sql = sql[len(prefix):]
                 break
-        
+
         if sql.endswith("```"):
             sql = sql[:-3]
-        
+
         return sql.strip()
-    
+
     def _generate_sql(self, question: str) -> str:
         """生成SQL语句"""
         schema = self._get_schema()
@@ -143,18 +152,16 @@ class SQLQueryAgent(BaseSubAgent):
         )
         sql = self._llm_to_str(self.llm.invoke(prompt)).strip()
         return self._clean_sql(sql)
-    
+
     def _correct_sql(self, question: str, original_sql: str, error_msg: str, attempt: int) -> str:
         """SQL 自动纠错（Reflection 模式）
-        
-        将错误信息和原始 SQL 反馈给 LLM，要求其重新生成正确的 SQL。
-        
+
         Args:
             question: 用户原始问题
             original_sql: 出错的 SQL 语句
             error_msg: 错误信息
             attempt: 当前重试次数（从1开始）
-            
+
         Returns:
             修正后的 SQL 语句
         """
@@ -168,57 +175,100 @@ class SQLQueryAgent(BaseSubAgent):
         )
         corrected = self._llm_to_str(self.llm.invoke(prompt)).strip()
         return self._clean_sql(corrected)
-    
+
+    def _build_mcp_env(self) -> dict:
+        """构建 MCP 子进程所需的环境变量"""
+        import os
+        env = {**os.environ}
+        db_type = self.db_config.get("type", "sqlite")
+        env["DB_TYPE"] = db_type
+
+        if db_type == "sqlite":
+            env["DB_PATH"] = self.db_config.get("path", "./data/company.db")
+        else:
+            env["DB_HOST"] = str(self.db_config.get("host", "localhost"))
+            env["DB_PORT"] = str(self.db_config.get("port", 3306))
+            env["DB_NAME"] = str(self.db_config.get("database", ""))
+            env["DB_USER"] = str(self.db_config.get("username", ""))
+            env["DB_PASSWORD"] = str(self.db_config.get("password", ""))
+
+        return env
+
     async def _execute_sql_via_mcp(self, sql: str) -> str:
-        """通过MCP工具执行SQL
-        
+        """通过 MCP 工具执行 SQL
+
         Args:
             sql: SQL语句
-            
+
         Returns:
-            查询结果JSON字符串
+            查询结果 JSON 字符串
         """
         mcp_script = Path(__file__).parent.parent / "mcp_sql_server.py"
         server_params = StdioServerParameters(
             command=sys.executable,
-            args=[str(mcp_script)]
+            args=[str(mcp_script)],
+            env=self._build_mcp_env(),
         )
-        
+
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                
+
                 result = await session.call_tool(
-                    "execute_sql", 
+                    "execute_sql",
                     arguments={"sql": sql}
                 )
-                
+
                 if result.content:
                     return result.content[0].text
                 return json.dumps({"error": "无返回结果"})
-    
+
+    async def _get_schema_via_mcp(self) -> str:
+        """通过 MCP 工具获取数据库 Schema
+
+        Returns:
+            Schema JSON 字符串
+        """
+        mcp_script = Path(__file__).parent.parent / "mcp_sql_server.py"
+        server_params = StdioServerParameters(
+            command=sys.executable,
+            args=[str(mcp_script)],
+            env=self._build_mcp_env(),
+        )
+
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+                result = await session.call_tool(
+                    "get_schema",
+                    arguments={}
+                )
+
+                if result.content:
+                    return result.content[0].text
+                return json.dumps({"error": "无返回结果"})
+
     def _run_async(self, coro):
-        """安全地执行异步代码，兼容已有事件循环（如 httpx/openai 遗留的）"""
+        """安全地执行异步代码，兼容已有事件循环"""
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
-        
+
         if loop and loop.is_running():
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, coro).result()
         else:
             return asyncio.run(coro)
-    
-    def query(self, question: str, max_retries: int = 3) -> Dict[str, Any]:
+
+    def query(self, question: str, max_retries: int = 2) -> Dict[str, Any]:
         """执行查询，失败时自动纠错并重试（Reflection 循环）
-        
-        流程：SQL生成 → 执行 → [失败] → 错误反馈给LLM → 重新生成 → 最多重试 max_retries 次
-        
+
         Args:
             question: 用户问题
-            max_retries: 最大重试次数（默认3次）
-            
+            max_retries: 最大重试次数（默认2次）
+
         Returns:
             {
                 "sql": 最终执行的SQL,
@@ -233,22 +283,22 @@ class SQLQueryAgent(BaseSubAgent):
             "error": None,
             "retry_count": 0
         }
-        
+
         try:
             sql = self._generate_sql(question)
             result["sql"] = sql
-            
+
             if not sql:
                 result["error"] = "未能生成有效的SQL"
                 return result
-            
+
             for attempt in range(max_retries):
                 query_result = self._run_async(self._execute_sql_via_mcp(sql))
                 result_data = json.loads(query_result)
-                
+
                 if isinstance(result_data, dict) and "error" in result_data:
                     error_msg = result_data["error"]
-                    
+
                     if attempt < max_retries - 1:
                         logger.info("SQL纠错 第%d次执行失败: %s，正在让LLM自动修复...", attempt + 1, error_msg)
                         sql = self._correct_sql(question, sql, error_msg, attempt + 1)
@@ -261,9 +311,8 @@ class SQLQueryAgent(BaseSubAgent):
                     if attempt > 0:
                         logger.info("SQL纠错 第%d次修复后执行成功", attempt)
                     break
-                    
+
         except Exception as e:
             result["error"] = f"查询失败: {str(e)}"
-        
-        return result
 
+        return result

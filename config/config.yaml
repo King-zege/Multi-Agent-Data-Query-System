@@ -7,8 +7,19 @@ llm:
   max_tokens: 2048
 
 # 数据库配置
+# type: sqlite | mysql | postgresql
 database:
+  type: "sqlite"              # 数据库类型
+
+  # SQLite 配置
   path: "./data/company.db"
+
+  # MySQL / PostgreSQL 配置（type 非 sqlite 时生效）
+  host: "localhost"
+  port: 3306                  # MySQL=3306, PostgreSQL=5432
+  database: "company"
+  username: "root"
+  password: ""
 
 # NL2SQL配置
 nl2sql:

@@ -47,6 +47,12 @@ def test_db_path(tmp_path):
 
 
 @pytest.fixture
+def db_config(test_db_path):
+    """基于 test_db_path 构建 db_config 字典（兼容新的 SQLQueryAgent 接口）"""
+    return {"type": "sqlite", "path": test_db_path}
+
+
+@pytest.fixture
 def memory_db_path(tmp_path):
     """创建测试用长期记忆数据库（真实文件，每次测试独立）"""
     db_path = tmp_path / "test_memory.db"
@@ -116,13 +122,13 @@ def fake_llm():
 # ======================== MasterAgent fixture ========================
 
 @pytest.fixture
-def master_agent(test_db_path, memory_db_path, fake_llm):
+def master_agent(db_config, memory_db_path, fake_llm):
     """创建用于测试的 MasterAgent 实例（使用 FakeLLM）"""
     from agents.master_agent import MasterAgent
 
     agent = MasterAgent(
         llm=fake_llm,
-        db_path=test_db_path,
+        db_config=db_config,
         num_examples=3,
         memory_db_path=memory_db_path,
         short_term_max_tokens=1000,

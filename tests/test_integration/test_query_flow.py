@@ -24,7 +24,7 @@ def system(test_db_path, memory_db_path, fake_llm):
 
     master = MasterAgent(
         llm=fake_llm,
-        db_path=test_db_path,
+        db_config={"type": "sqlite", "path": test_db_path},
         num_examples=3,
         memory_db_path=memory_db_path,
         short_term_max_tokens=1000,

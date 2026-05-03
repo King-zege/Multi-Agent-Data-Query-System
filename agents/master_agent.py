@@ -94,26 +94,26 @@ class MasterAgent:
             text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
         return text
     
-    def __init__(self, llm: BaseLLM, db_path: str, num_examples: int = 3, 
+    def __init__(self, llm: BaseLLM, db_config: Dict[str, Any], num_examples: int = 3,
                 memory_db_path: str = "./data/long_term_memory.db",
                 short_term_max_tokens: int = 1000,
                 tavily_api_key: str = ""):
         """初始化主智能体
-        
+
         Args:
             llm: 语言模型实例
-            db_path: 数据库路径
+            db_config: 数据库配置字典，支持 SQLite/MySQL/PostgreSQL
             num_examples: Few-shot示例数量
             memory_db_path: 长期记忆数据库路径
             short_term_max_tokens: 短期记忆最大token数
             tavily_api_key: Tavily 搜索 API Key
         """
         self.llm = llm
-        self.db_path = db_path
+        self.db_config = db_config
         self.short_term_max_tokens = short_term_max_tokens
 
         # 初始化子智能体
-        self.sql_agent = SQLQueryAgent(llm, db_path, num_examples)
+        self.sql_agent = SQLQueryAgent(llm, db_config, num_examples)
         self.analysis_agent = DataAnalysisAgent(llm)
         self.search_agent = WebSearchAgent(llm, tavily_api_key=tavily_api_key)
 

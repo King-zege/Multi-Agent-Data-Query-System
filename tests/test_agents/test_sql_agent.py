@@ -19,11 +19,11 @@ from tests.test_utils.fake_llm import FakeLLM
 
 
 @pytest.fixture
-def sql_agent(test_db_path, fake_llm):
+def sql_agent(db_config, fake_llm):
     """创建 SQLAgent 测试实例"""
     from agents.sql_agent import SQLQueryAgent
 
-    agent = SQLQueryAgent(llm=fake_llm, db_path=test_db_path, num_examples=3)
+    agent = SQLQueryAgent(llm=fake_llm, db_config=db_config, num_examples=3)
     return agent
 
 

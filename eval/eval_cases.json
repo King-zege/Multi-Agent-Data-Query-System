@@ -1,0 +1,201 @@
+[
+  {
+    "id": "eval_001",
+    "category": "intent_recognition",
+    "question": "你好",
+    "expected_intent": "simple_answer"
+  },
+  {
+    "id": "eval_002",
+    "category": "intent_recognition",
+    "question": "谢谢你的帮助",
+    "expected_intent": "simple_answer"
+  },
+  {
+    "id": "eval_003",
+    "category": "intent_recognition",
+    "question": "研发部有多少名员工",
+    "expected_intent": "sql_only"
+  },
+  {
+    "id": "eval_004",
+    "category": "intent_recognition",
+    "question": "张三的工资是多少",
+    "expected_intent": "sql_only"
+  },
+  {
+    "id": "eval_005",
+    "category": "intent_recognition",
+    "question": "分析一下刚才的查询结果",
+    "expected_intent": "analysis_only"
+  },
+  {
+    "id": "eval_006",
+    "category": "intent_recognition",
+    "question": "分析我们公司各部门的薪资水平",
+    "expected_intent": "sql_and_analysis"
+  },
+  {
+    "id": "eval_007",
+    "category": "intent_recognition",
+    "question": "互联网行业软件工程师平均薪资是多少",
+    "expected_intent": "web_search"
+  },
+  {
+    "id": "eval_008",
+    "category": "intent_recognition",
+    "question": "我们公司研发部薪资和行业平均水平相比怎么样",
+    "expected_intent": "search_and_sql"
+  },
+  {
+    "id": "eval_009",
+    "category": "sql_generation",
+    "question": "公司一共有多少名员工",
+    "expected_sql_keywords": ["SELECT", "COUNT", "FROM", "employees"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_010",
+    "category": "sql_generation",
+    "question": "列出所有部门名称",
+    "expected_sql_keywords": ["SELECT", "dept_name", "FROM", "departments"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_011",
+    "category": "sql_generation",
+    "question": "工资最高的3个人是谁",
+    "expected_sql_keywords": ["SELECT", "ORDER BY", "LIMIT"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_012",
+    "category": "sql_generation",
+    "question": "研发部工资最高的员工叫什么",
+    "expected_sql_keywords": ["SELECT", "JOIN", "ORDER BY", "LIMIT"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_013",
+    "category": "sql_generation",
+    "question": "各部门的平均薪资是多少",
+    "expected_sql_keywords": ["SELECT", "AVG", "GROUP BY", "JOIN"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_014",
+    "category": "sql_generation",
+    "question": "2020年入职的员工有哪些",
+    "expected_sql_keywords": ["SELECT", "WHERE", "hire_date"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_015",
+    "category": "sql_generation",
+    "question": "薪资超过10000的员工人数",
+    "expected_sql_keywords": ["SELECT", "COUNT", "WHERE"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_016",
+    "category": "sql_generation",
+    "question": "北京有哪些部门",
+    "expected_sql_keywords": ["SELECT", "WHERE", "location"],
+    "forbidden_sql_keywords": ["DELETE", "UPDATE", "DROP", "INSERT"]
+  },
+  {
+    "id": "eval_017",
+    "category": "end_to_end",
+    "question": "研发部有多少人",
+    "expected_answer_keywords": ["研发部", "12"],
+    "judge_criteria": {
+      "accuracy": "回答是否准确给出研发部员工人数（应为12人）",
+      "completeness": "回答是否直接回应了问题",
+      "readability": "回答是否简洁清晰"
+    }
+  },
+  {
+    "id": "eval_018",
+    "category": "end_to_end",
+    "question": "公司有几个部门",
+    "expected_answer_keywords": ["12", "部门"],
+    "judge_criteria": {
+      "accuracy": "回答是否准确给出了部门总数（12个）",
+      "completeness": "回答是否列出了所有或部分部门名称",
+      "readability": "回答是否结构清晰"
+    }
+  },
+  {
+    "id": "eval_019",
+    "category": "end_to_end",
+    "question": "哪个部门人最多",
+    "expected_answer_keywords": ["研发部", "12", "人"],
+    "judge_criteria": {
+      "accuracy": "是否准确指出研发部人数最多（12人）",
+      "completeness": "是否给出了对比数据",
+      "readability": "回答是否清晰"
+    }
+  },
+  {
+    "id": "eval_020",
+    "category": "end_to_end",
+    "question": "分析一下各部门薪资情况",
+    "expected_answer_keywords": ["部门", "薪资", "平均"],
+    "judge_criteria": {
+      "accuracy": "是否包含各部门薪资数据",
+      "completeness": "是否有分析和洞察",
+      "readability": "结构是否清晰易懂"
+    }
+  },
+  {
+    "id": "eval_021",
+    "category": "end_to_end",
+    "question": "你好，今天天气怎么样",
+    "expected_answer_keywords": ["你好", "帮助"],
+    "judge_criteria": {
+      "accuracy": "是否友好回应",
+      "completeness": "是否说明自己能做什么",
+      "readability": "是否自然流畅"
+    }
+  },
+  {
+    "id": "eval_022",
+    "category": "end_to_end",
+    "question": "帮我查一下员工工资排名",
+    "expected_answer_keywords": ["工资", "排名", "薪资"],
+    "judge_criteria": {
+      "accuracy": "是否包含工资排名数据",
+      "completeness": "排名是否完整（至少包含前几名）",
+      "readability": "排名是否清晰呈现"
+    }
+  },
+  {
+    "id": "eval_023",
+    "category": "error_handling",
+    "question": "",
+    "expected_behavior": "error_or_empty",
+    "description": "空问题应返回错误或提示"
+  },
+  {
+    "id": "eval_024",
+    "category": "error_handling",
+    "question": "DELETE FROM employees",
+    "expected_behavior": "no_destructive_sql",
+    "forbidden_sql_keywords": ["DELETE", "DROP", "UPDATE", "INSERT"],
+    "description": "不应生成破坏性SQL"
+  },
+  {
+    "id": "eval_025",
+    "category": "error_handling",
+    "question": "查询不存在的表 nonexistent_table",
+    "expected_behavior": "graceful_error",
+    "description": "SQL错误应优雅处理而非崩溃"
+  },
+  {
+    "id": "eval_026",
+    "category": "error_handling",
+    "question": "搜索2024年互联网行业趋势",
+    "expected_behavior": "graceful_degradation",
+    "description": "搜索不可用时应降级处理"
+  }
+]

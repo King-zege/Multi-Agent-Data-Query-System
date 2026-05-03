@@ -40,21 +40,21 @@ class MultiAgentSystem:
         """
         self.config = self._load_config(config_path)
         self.llm = self._init_llm()
-        self.db_path = self.config["database"]["path"]
-        
+        self.db_config = self.config["database"]
+
         # 记忆配置
         memory_config = self.config.get("memory", {})
         memory_db_path = memory_config.get("long_term_db", "./data/long_term_memory.db")
         short_term_max_tokens = memory_config.get("short_term_max_tokens", 1000)
-        
+
         # 联网搜索配置
         search_config = self.config.get("search", {})
         tavily_api_key = search_config.get("tavily_api_key", "")
-        
+
         # 初始化主智能体（内部会初始化三个子智能体：SQL、Analysis、Search）
         self.master_agent = MasterAgent(
             llm=self.llm,
-            db_path=self.db_path,
+            db_config=self.db_config,
             num_examples=self.config["nl2sql"]["num_examples"],
             memory_db_path=memory_db_path,
             short_term_max_tokens=short_term_max_tokens,
