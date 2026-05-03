@@ -27,23 +27,28 @@ def load_schema(falcon_base, db_id):
 
 
 def detect_column_type(values, max_sample=20):
-    """从数据值推断列类型"""
+    """从数据值推断列类型，自动处理超大整数（BIGINT）"""
     sample = [v for v in values[:max_sample] if v.strip() and v.strip() != "NULL"]
     if not sample:
         return "TEXT"
 
     is_int = True
     is_float = False
+    max_abs = 0
     for val in sample:
         cleaned = val.replace(",", "").replace("$", "").replace(" ", "").strip()
         try:
             n = float(cleaned)
+            max_abs = max(max_abs, abs(n))
             if n != int(n):
                 is_int = False
                 is_float = True
         except ValueError:
             return "TEXT"
     if is_int:
+        # 超过 32-bit 有符号整数范围时使用 BIGINT
+        if max_abs > 2147483647:
+            return "BIGINT"
         return "INTEGER"
     if is_float:
         return "DECIMAL(12,2)"

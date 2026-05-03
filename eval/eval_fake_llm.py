@@ -15,7 +15,8 @@ class EvalMockLLM:
     匹配优先级：
     1. 意图识别 prompt → 从"当前问题："提取问题，查 intent_map
     2. SQL 生成 prompt → 从"问题："提取问题，查 sql_map
-    3. 通用关键词匹配 → 查通用 responses
+    3. Falcon fallback SQL（load_falcon_fallbacks 加载）
+    4. 通用关键词匹配 → 查通用 responses
     """
 
     def __init__(self):
@@ -73,6 +74,56 @@ class EvalMockLLM:
             "汇总回答": "根据查询结果，{question}的答案是：{data_summary}",
             "纠错": "SELECT e.emp_name FROM employees e JOIN salaries s ON e.emp_id = s.emp_id",
         }
+
+        # Falcon 动态映射：由 load_falcon_fallbacks() 填充
+        self.answer_map: Dict[str, Any] = {}
+
+    # ============== Falcon 数据集动态加载 ==============
+
+    def load_falcon_fallbacks(self, cases: list):
+        """从评估用例中加载 Falcon ground truth SQL 作为 fallback
+
+        将每个 case 的问题 → ground_truth_sql 添加到 sql_map，
+        问题 → ground_truth_answer 添加到 answer_map。
+        """
+        for case in cases:
+            question = case.get("question", "")
+            sql = case.get("ground_truth_sql", "")
+            answer = case.get("ground_truth_answer", [])
+            if question and sql:
+                self.sql_map[question] = sql
+            if question and answer:
+                self.answer_map[question] = answer
+
+    def _match_falcon_sql(self, question: str) -> Optional[str]:
+        """精确匹配 Falcon 问题 → SQL"""
+        # 先尝试精确匹配
+        if question in self.sql_map:
+            return self.sql_map[question]
+        # 尝试子串匹配（处理 prompt 中问题被截断的情况）
+        for q, sql in self.sql_map.items():
+            if len(q) > 10 and q[:30] in question:
+                return sql
+            if len(question) > 10 and question[:30] in q:
+                return sql
+        return None
+
+    def _build_falcon_summary(self, question: str) -> Optional[str]:
+        """为 Falcon 问题构建 mock 汇总回答"""
+        if question in self.answer_map:
+            answer = self.answer_map[question]
+            if isinstance(answer, list) and len(answer) > 0:
+                first = answer[0]
+                if isinstance(first, dict):
+                    keys = list(first.keys())
+                    vals = [str(first[k]) for k in keys[:3]]
+                    return f"查询结果：{', '.join(f'{k}={v}' for k, v in zip(keys, vals))}..."
+                return f"查询结果：{str(answer)[:200]}"
+            return f"查询结果：{str(answer)[:200]}"
+        # 对于没有 answer 的 Falcon 问题，返回通用答复
+        return "根据查询，相关数据已整理完成。"
+
+    # ============== 问题提取 ==============
 
     @staticmethod
     def _extract_question(prompt: str) -> str:
@@ -134,13 +185,15 @@ class EvalMockLLM:
         if "SQL查询专家" in prompt or "请为以下问题生成SQL" in prompt:
             sql = self._match_sql(question)
             if sql is None:
+                sql = self._match_falcon_sql(question)
+            if sql is None:
                 sql = "SELECT * FROM employees LIMIT 10"
             self.calls.append(("sql_gen", question, sql))
             return _FakeMessage(sql)
 
         # 4. SQL 纠错 prompt
         if "修复一段出错的SQL" in prompt:
-            fixed_sql = self._match_sql(question) or "SELECT e.emp_name FROM employees e"
+            fixed_sql = self._match_sql(question) or self._match_falcon_sql(question) or "SELECT e.emp_name FROM employees e"
             self.calls.append(("sql_fix", question, fixed_sql))
             return _FakeMessage(fixed_sql)
 
@@ -193,6 +246,11 @@ class EvalMockLLM:
 
     def _build_summary(self, prompt: str, question: str) -> str:
         """构建汇总回答"""
+        # 优先使用 Falcon fallback
+        falcon_answer = self._build_falcon_summary(question)
+        if falcon_answer and "查询结果" in falcon_answer:
+            return falcon_answer
+
         # 尝试匹配具体的回答
         if "研发部有多少人" in question or "研发部有多少" in prompt:
             return "研发部共有12名员工。"
