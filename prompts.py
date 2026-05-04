@@ -6,17 +6,46 @@ NL2SQL提示词模板
 
 SYSTEM_PROMPT = """你是一个SQL查询专家，负责将用户的自然语言问题转换为准确的SQL查询语句。
 
+当前连接的数据库类型：{db_type}
+
 数据库Schema如下：
 {schema}
 
 请遵循以下规则：
 1. 只生成SELECT查询，不要执行修改操作
-2. 使用标准SQL语法，兼容SQLite
-3. 表名和列名区分大小写
-4. 日期使用 'YYYY-MM-DD' 格式
-5. 如果问题不明确，倾向于返回更多信息而不是更少
-
+2. 严格使用Schema中展示的表名和列名（包括大小写），不要自行转换命名风格
+3. 日期使用 'YYYY-MM-DD' 格式
+4. 如果问题不明确，倾向于返回更多信息而不是更少
+5. WHERE条件中的字符串值语言必须与Schema列名语言一致：列名为英文 → 值用英文（统一小写）；列名为中文 → 值用中文。不要根据问题语言猜测值的语言
+{db_specific_rules}
 直接返回SQL语句，不需要解释。"""
+
+
+def _get_db_specific_rules(db_type: str) -> str:
+    """返回数据库特定的SQL规则提示
+
+    Args:
+        db_type: 数据库类型（sqlite / mysql / postgresql）
+
+    Returns:
+        数据库特定的规则文本
+    """
+    rules = {
+        "sqlite": (
+            "5. SQLite不支持DATEDIFF函数，日期计算请使用julianday()或strftime()\n"
+            "6. SQLite中字符串拼接使用 || 操作符，不支持CONCAT"
+        ),
+        "mysql": (
+            "5. MySQL严格模式下GROUP BY必须包含SELECT中所有非聚合列\n"
+            "6. 使用反引号包裹表名和列名（如有保留字或特殊字符）"
+        ),
+        "postgresql": (
+            "5. PostgreSQL中未加双引号的标识符会自动转为小写\n"
+            "6. 列名已在导入时统一为小写，直接使用小写列名即可\n"
+            "7. LIMIT语法使用 LIMIT n 而非 TOP n"
+        ),
+    }
+    return rules.get(db_type, "")
 
 
 NL2SQL_EXAMPLES = [
@@ -45,33 +74,72 @@ JOIN salaries s ON e.emp_id = s.emp_id
 WHERE d.dept_name = '研发部'
 ORDER BY total_salary DESC
 LIMIT 3"""
+    },
+    {
+        "question": "各部门中工资排名前2的员工及其工资是多少？",
+        "sql": """WITH ranked AS (
+    SELECT
+        e.emp_name,
+        d.dept_name,
+        (s.base_salary + s.bonus) as total_salary,
+        ROW_NUMBER() OVER (PARTITION BY d.dept_id ORDER BY (s.base_salary + s.bonus) DESC) as rn
+    FROM employees e
+    JOIN departments d ON e.dept_id = d.dept_id
+    JOIN salaries s ON e.emp_id = s.emp_id
+)
+SELECT emp_name, dept_name, total_salary
+FROM ranked
+WHERE rn <= 2
+ORDER BY dept_name, rn"""
+    },
+    {
+        "question": "找出工资超过部门平均工资的员工及其超出比例",
+        "sql": """WITH dept_avg AS (
+    SELECT e.dept_id, AVG(s.base_salary + s.bonus) as avg_salary
+    FROM employees e
+    JOIN salaries s ON e.emp_id = s.emp_id
+    GROUP BY e.dept_id
+),
+emp_salary AS (
+    SELECT e.emp_name, e.dept_id, (s.base_salary + s.bonus) as total_salary
+    FROM employees e
+    JOIN salaries s ON e.emp_id = s.emp_id
+)
+SELECT es.emp_name, es.total_salary,
+    ROUND((es.total_salary - da.avg_salary) * 100.0 / da.avg_salary, 1) as above_avg_pct
+FROM emp_salary es
+JOIN dept_avg da ON es.dept_id = da.dept_id
+WHERE es.total_salary > da.avg_salary
+ORDER BY above_avg_pct DESC"""
     }
 ]
 
 
-def get_few_shot_prompt(question: str, schema: str, num_examples: int = 3) -> str:
+def get_few_shot_prompt(question: str, schema: str, db_type: str = "sqlite", num_examples: int = 3) -> str:
     """构建Few-shot提示词
-    
+
     Args:
         question: 用户的自然语言问题
         schema: 数据库表结构描述
+        db_type: 数据库类型（sqlite / mysql / postgresql）
         num_examples: 使用的示例数量
-    
+
     Returns:
         完整的提示词
     """
+    db_rules = _get_db_specific_rules(db_type)
     examples_text = ""
     for example in NL2SQL_EXAMPLES[:num_examples]:
         examples_text += f"\n问题：{example['question']}\n{example['sql']}\n"
-    
-    prompt = f"""{SYSTEM_PROMPT.format(schema=schema)}
 
-以下是一些示例：
+    prompt = f"""{SYSTEM_PROMPT.format(schema=schema, db_type=db_type, db_specific_rules=db_rules)}
+
+以下示例来自其他数据库，仅展示SQL语法模式和写法规范。你必须严格根据上方Schema中列出的实际表名和列名来生成SQL，绝不能使用示例中的表名或列名：
 {examples_text}
 现在请为以下问题生成SQL（只返回SQL语句，不要任何前缀）：
 问题：{question}
 """
-    
+
     return prompt
 
 
@@ -249,20 +317,24 @@ def get_summary_prompt(question: str, sql_result: str, analysis_result: str) -> 
 - 用自然语言表达，但关键数据（姓名、数字）必须完整保留"""
 
 
-def get_sql_correction_prompt(question: str, schema: str, original_sql: str, error_msg: str, attempt: int) -> str:
+def get_sql_correction_prompt(question: str, schema: str, original_sql: str, error_msg: str, attempt: int, db_type: str = "sqlite") -> str:
     """SQL 自动纠错提示词（Reflection 模式）
-    
+
     Args:
         question: 用户原始问题
         schema: 数据库 Schema
         original_sql: 出错的 SQL 语句
         error_msg: 错误信息
         attempt: 当前重试次数（从1开始）
-    
+        db_type: 数据库类型（sqlite / mysql / postgresql）
+
     Returns:
         SQL 纠错提示词
     """
+    db_rules = _get_db_specific_rules(db_type)
     return f"""你是一个SQL专家，需要修复一段出错的SQL语句。这是第{attempt}次修复尝试。
+
+当前数据库类型：{db_type}
 
 数据库Schema：
 {schema}
@@ -276,13 +348,65 @@ def get_sql_correction_prompt(question: str, schema: str, original_sql: str, err
 {error_msg}
 
 请分析错误原因并提供修复后的SQL语句。常见错误类型：
-- 表名或列名拼写错误 → 对照Schema检查
+- 表名或列名拼写错误 → 对照Schema检查（严格使用Schema中的列名大小写）
 - 语法错误 → 检查SQL语法
-- 数据类型不匹配 → 检查字段类型
-- 缺少JOIN条件 → 补充关联条件
-- 聚合函数使用错误 → 检查GROUP BY
+
+数据库特定规则：
+{db_rules}
 
 直接返回修复后的SQL语句，不要任何解释，不要代码块标记。"""
+
+
+def get_sql_review_prompt(question: str, schema: str, sql: str, db_type: str = "sqlite") -> str:
+    """SQL 结构审查提示词 — Layer 1
+
+    审查 SQL 文本本身：分区键、聚合函数、条件完整性。
+    返回格式：OK 或 ISSUE: <描述>
+    """
+    return f"""你是一个SQL审查专家。请逐条检查以下SQL是否正确实现了用户问题。
+
+数据库类型：{db_type}
+Schema：
+{schema}
+
+用户问题：{question}
+SQL：
+{sql}
+
+审查清单（逐项检查）：
+1. 分区/分组键：问题按什么维度分组（如"每个部门"、"各店铺"）？SQL的GROUP BY或PARTITION BY是否对应这个维度？
+2. 聚合函数：问题要求什么计算（平均/最高/总和/计数）？SQL使用的聚合函数是否匹配？
+3. 条件完整性：问题中的每个约束条件（时间范围、金额阈值、名称过滤等）是否都在WHERE/HAVING中体现？
+4. 排序/量级：如有"最高/最低/前N"要求，ORDER BY + LIMIT是否正确？
+5. 多余条件：SQL中是否有问题未提及的过滤条件？
+
+如果所有项都正确，只返回一个词：OK
+如果发现问题，返回格式：ISSUE: <具体问题描述>"""
+
+
+def get_result_review_prompt(question: str, sql: str, result_sample: str,
+                               row_count: int, db_type: str = "sqlite") -> str:
+    """结果集合理性审查提示词 — Layer 2
+
+    审查查询结果的行数、数值量级、语义一致性。
+    返回格式：OK 或 ISSUE: <描述>
+    """
+    return f"""你是一个数据质量审查员。检查以下查询结果是否与用户问题语义一致。
+
+用户问题：{question}
+SQL：{sql}
+返回行数：{row_count}
+结果样例（前5行）：
+{result_sample}
+
+检查：
+- 问题要求"Top N"/"前N名"，结果行数 ≤ N？GROUP BY分组数是否与问题维度一致？
+- 问题要求"最高/最大"，结果是否为1行（或少数并列）？
+- 数值的数量级是否合理（金额不应为负数，比例应在0-1或0-100范围）？
+- 关键字段是否有不应出现的NULL值？
+
+全部合理返回：OK
+有问题返回：ISSUE: <具体问题描述>"""
 
 
 def get_search_synthesis_prompt(question: str, search_results: str) -> str:
@@ -371,3 +495,30 @@ def get_chart_config_prompt(data_summary: str, raw_data: str, context: str = "")
 {{"title":{{"text":"标题"}},"tooltip":{{}},"xAxis":{{"data":["A","B"]}},"yAxis":{{}},"series":[{{"type":"bar","data":[1,2]}}]}}
 
 注意：返回的必须是可以直接被JSON.parse()解析的合法JSON字符串。"""
+
+
+def get_cache_match_prompt(question: str, inventory_text: str) -> str:
+    """缓存匹配提示词 — MasterAgent 用轻量 LLM 判断问题是否命中缓存
+
+    Args:
+        question: 用户问题
+        inventory_text: 缓存清单文本，格式：
+            - abc123: 研发部工资最高的3名员工及其薪资
+            - def456: 各部门2024年平均工资统计
+
+    Returns:
+        缓存匹配提示词
+    """
+    return f"""判断用户问题是否与缓存中的数据匹配。
+
+用户问题：{question}
+
+缓存区已有数据：
+{inventory_text}
+
+规则：
+- 如果用户问题与某条缓存描述完全一致（同一数据查询），返回：EXACT:<key>
+- 如果用户问题需要分析/对比，且缓存中有相关数据可直接使用，返回：PARTIAL:<key>
+- 如果不匹配，返回：NONE
+
+只返回 EXACT:<key>、PARTIAL:<key> 或 NONE，不要其他内容。"""

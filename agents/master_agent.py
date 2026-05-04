@@ -17,7 +17,7 @@ from langchain_core.language_models import BaseLLM
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from prompts import get_master_intent_prompt, get_summary_prompt, get_intent_correction_prompt
+from prompts import get_master_intent_prompt, get_summary_prompt, get_intent_correction_prompt, get_cache_match_prompt
 from agents.base import AgentRegistry
 from agents.sql_agent import SQLQueryAgent
 from agents.analysis_agent import DataAnalysisAgent
@@ -396,7 +396,7 @@ class MasterAgent:
         thread_id = state["metadata"].get("thread_id", "default")
         
         try:
-            result = self.sql_agent.query(question)
+            result = self.sql_agent.query(question, thread_id=thread_id)
             state["sql_result"] = result
             state["metadata"]["sql_result"] = result
             
@@ -452,8 +452,22 @@ class MasterAgent:
         return self._run_pipeline(state, "search_and_sql")
 
     def _dispatch_sql(self, state: MasterAgentState) -> MasterAgentState:
-        """调度 SQL 智能体并管理会话数据"""
+        """调度 SQL 智能体并管理会话数据（支持缓存命中跳过查询）"""
         thread_id = state["metadata"].get("thread_id", "default")
+        question = state["user_question"]
+
+        # 检查缓存（精确命中 → 跳过 SQL 查询）
+        cache_match = self._match_cache(question, thread_id)
+        if cache_match and cache_match["mode"] == "exact":
+            cached = self.sql_agent.get_cached_result(thread_id, cache_match["key"])
+            if cached:
+                state["sql_result"] = cached
+                state["metadata"]["sql_result"] = cached
+                if thread_id not in self.session_data:
+                    self.session_data[thread_id] = {}
+                self.session_data[thread_id]["last_sql_result"] = cached
+                return state
+
         agent = self.registry.get("sql_only")
         if agent:
             state = agent.execute(state)
@@ -464,9 +478,30 @@ class MasterAgent:
         return state
 
     def _dispatch_analysis(self, state: MasterAgentState) -> MasterAgentState:
-        """调度分析智能体，自动补充会话数据"""
+        """调度分析智能体，自动补充会话数据（含缓存回退）"""
+        thread_id = state["metadata"].get("thread_id", "default")
+        question = state["user_question"]
+
         agent = self.registry.get("analysis_only")
         if agent:
+            # 如果 state 和 session_data 都没有 sql_result，尝试从缓存获取
+            has_data = (
+                (state.get("sql_result") and "data" in state.get("sql_result", {}))
+                or (thread_id in self.session_data
+                    and "last_sql_result" in self.session_data[thread_id]
+                    and self.session_data[thread_id]["last_sql_result"]
+                    and "data" in self.session_data[thread_id]["last_sql_result"])
+            )
+            if not has_data:
+                cache_match = self._match_cache(question, thread_id)
+                if cache_match:
+                    cached = self.sql_agent.get_cached_result(thread_id, cache_match["key"])
+                    if cached:
+                        state["sql_result"] = cached
+                        if thread_id not in self.session_data:
+                            self.session_data[thread_id] = {}
+                        self.session_data[thread_id]["last_sql_result"] = cached
+
             # 将 session_data 注入 state 供分析智能体读取
             state["metadata"]["_session_data"] = self.session_data
             state = agent.execute(state)
@@ -480,11 +515,25 @@ class MasterAgent:
         return state
 
     def _run_pipeline(self, state: MasterAgentState, pipeline_key: str) -> MasterAgentState:
-        """执行复合意图管线，自动管理会话数据"""
+        """执行复合意图管线，自动管理会话数据（支持缓存跳过SQL步骤）"""
         pipeline = COMPOSITE_PIPELINES[pipeline_key]
         thread_id = state["metadata"].get("thread_id", "default")
+        question = state["user_question"]
 
         for step_intent in pipeline["steps"]:
+            # SQL步骤：优先检查缓存
+            if step_intent == "sql_only":
+                cache_match = self._match_cache(question, thread_id)
+                if cache_match:
+                    cached = self.sql_agent.get_cached_result(thread_id, cache_match["key"])
+                    if cached:
+                        state["sql_result"] = cached
+                        state["metadata"]["sql_result"] = cached
+                        if thread_id not in self.session_data:
+                            self.session_data[thread_id] = {}
+                        self.session_data[thread_id]["last_sql_result"] = cached
+                        continue  # 跳过SQL查询，直接进入下一步
+
             agent = self.registry.get(step_intent)
             if not agent:
                 state["error"] = f"未找到意图 {step_intent} 对应的智能体"
@@ -581,17 +630,54 @@ class MasterAgent:
         
         return state
     
+    def _match_cache(self, question: str, thread_id: str) -> Optional[Dict[str, str]]:
+        """判断用户问题是否命中缓存（轻量LLM调用）
+
+        Returns:
+            {"key": "abc123", "mode": "exact"} 或 {"key": "abc123", "mode": "partial"} 或 None
+        """
+        try:
+            inventory = self.sql_agent.get_cache_inventory(thread_id)
+            if not inventory:
+                return None
+
+            lines = [f"- {k}: {v}" for k, v in inventory.items()]
+            inventory_text = "\n".join(lines)
+
+            prompt = get_cache_match_prompt(question, inventory_text)
+            response = self._llm_to_str(self.llm.invoke(prompt)).strip()
+
+            if response.upper().startswith("EXACT:"):
+                key = response.split(":", 1)[1].strip()
+                if key in inventory:
+                    logger.info("缓存精确命中: key=%s", key)
+                    return {"key": key, "mode": "exact"}
+            elif response.upper().startswith("PARTIAL:"):
+                key = response.split(":", 1)[1].strip()
+                if key in inventory:
+                    logger.info("缓存部分命中: key=%s", key)
+                    return {"key": key, "mode": "partial"}
+        except Exception as e:
+            logger.warning("缓存匹配失败，跳过缓存: %s", e)
+
+        return None
+
     def query(self, question: str, thread_id: str = "default", user_id: Optional[str] = None) -> str:
         """执行查询
-        
+
         Args:
             question: 用户问题
             thread_id: 线程ID，用于区分不同的会话
             user_id: 用户ID，用于长期记忆
-            
+
         Returns:
             回答结果
         """
+        # 每轮递减缓存TTL
+        cleared = self.sql_agent.tick_cache(thread_id)
+        if cleared > 0:
+            logger.debug("清除了 %d 条过期缓存", cleared)
+
         initial_state = {
             "messages": [HumanMessage(content=question)],
             "user_question": question,
@@ -666,7 +752,12 @@ class MasterAgent:
         """
         def sse(type_: str, **kwargs) -> str:
             return f"data: {json.dumps({'type': type_, **kwargs}, ensure_ascii=False)}\n\n"
-        
+
+        # 每轮递减缓存TTL
+        cleared = self.sql_agent.tick_cache(thread_id)
+        if cleared > 0:
+            logger.debug("清除了 %d 条过期缓存", cleared)
+
         # --- 意图识别（直接调用，以便立即推送状态）---
         yield sse("status", message="正在识别问题意图...")
         
@@ -762,9 +853,22 @@ class MasterAgent:
         else:
             # SQL 查询（适用于 sql_only / sql_and_analysis / search_and_sql）
             if intent in ("sql_only", "sql_and_analysis", "search_and_sql"):
-                yield sse("status", message="正在查询数据库...")
-                sql_result = self.sql_agent.query(question)
-                
+                # 检查缓存
+                cache_match = self._match_cache(question, thread_id)
+                if cache_match:
+                    cached = self.sql_agent.get_cached_result(thread_id, cache_match["key"])
+                    if cached:
+                        sql_result = cached
+                        logger.info("流式路径缓存命中: key=%s, mode=%s",
+                                   cache_match["key"], cache_match["mode"])
+                        yield sse("status", message="使用缓存数据（跳过数据库查询）...")
+                    else:
+                        yield sse("status", message="正在查询数据库...")
+                        sql_result = self.sql_agent.query(question, thread_id=thread_id)
+                else:
+                    yield sse("status", message="正在查询数据库...")
+                    sql_result = self.sql_agent.query(question, thread_id=thread_id)
+
                 if sql_result.get("sql"):
                     yield sse(
                         "sql",
