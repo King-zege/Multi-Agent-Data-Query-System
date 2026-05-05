@@ -30,6 +30,7 @@ data/long_term_memory.db
 .env.*.local
 
 # ===== IDE =====
+.claude/
 .vscode/
 .idea/
 *.swp
