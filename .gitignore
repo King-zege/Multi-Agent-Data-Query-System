@@ -54,6 +54,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 
+# ===== 视频文件 =====
+video/
+
 # ===== 项目文档（仅本地保留）=====
 项目介绍/
 技术面.md
