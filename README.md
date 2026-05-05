@@ -1,122 +1,125 @@
-# Multi-Agent Data Query System
+# 基于多智能体的自然语言数据库查询系统
 
-> A LangGraph-powered multi-agent system that translates natural language into SQL, analyzes data, searches the web, and generates visualizations — with long-term memory and streaming output.
+> 基于 LangGraph 的一主三从多智能体架构，支持自然语言查询数据库、深度分析、联网搜索和数据可视化，内置双层记忆系统和 SQL 结果缓存。
+
+[English](README_EN.md)
 
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
   <img src="https://img.shields.io/badge/python-3.10+-green.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/LangGraph-1.0+-orange.svg" alt="LangGraph 1.0+">
   <img src="https://img.shields.io/badge/database-SQLite%20%7C%20MySQL%20%7C%20PostgreSQL-lightgrey.svg" alt="Multi-DB">
+  <img src="https://img.shields.io/badge/coverage-99_cases-brightgreen.svg" alt="99 Eval Cases">
 </p>
 
-## Overview
+## 项目概述
 
-The system uses a **one-master / three-worker** agent architecture to answer natural language questions about your database:
+系统采用 **一主三从** 的多智能体架构，将自然语言问题转化为 SQL 查询并进行分析：
 
-- **MasterAgent** — intent classification (6-way), multi-step orchestration, cache-aware dispatch
-- **SQLQueryAgent** — NL2SQL generation with few-shot prompting, reflection-based self-correction, and automatic result caching
-- **DataAnalysisAgent** — statistical insights, trend detection, anomaly flagging, and ECharts chart generation
-- **WebSearchAgent** — Tavily-powered internet search with graceful degradation
+- **MasterAgent（主智能体）** — 6 种意图分类、多步骤任务编排、缓存感知调度
+- **SQLQueryAgent（SQL 查询智能体）** — Few-shot NL2SQL 生成、Reflection 自动纠错、结果自动缓存
+- **DataAnalysisAgent（数据分析智能体）** — 统计洞察、趋势检测、异常发现、ECharts 图表生成
+- **WebSearchAgent（联网搜索智能体）** — 基于 Tavily 的互联网搜索，未配置时优雅降级
 
 ```
-User Question
+用户问题
       │
       ▼
-  MasterAgent (intent router + cache matcher)
+  MasterAgent（意图识别 + 缓存匹配）
       │
-      ├── simple_answer ────────────────► Direct reply
-      ├── sql_only ─────────────────────► SQLAgent → Summarize
-      ├── analysis_only ────────────────► AnalysisAgent (uses cached data if available)
-      ├── sql_and_analysis ─────────────► SQLAgent → AnalysisAgent
-      ├── web_search ───────────────────► WebSearchAgent → Synthesize
-      └── search_and_sql ──────────────► SQLAgent + WebSearchAgent → Compare
+      ├── simple_answer ────────────────► 直接回复
+      ├── sql_only ─────────────────────► SQL查询 → 汇总
+      ├── analysis_only ────────────────► 数据分析（可直接用缓存）
+      ├── sql_and_analysis ─────────────► SQL查询 → 数据分析
+      ├── web_search ───────────────────► 联网搜索 → 综合回复
+      └── search_and_sql ──────────────► SQL + 联网搜索 → 对比分析
 ```
 
-## Key Features
+## 核心功能
 
-### NL2SQL with Self-Correction
-- Few-shot prompting with CTE examples tailored to each database dialect (SQLite / MySQL / PostgreSQL)
-- **Reflection loop**: on execution error, the error message is fed back to the LLM for automatic SQL repair (up to N retries)
-- **Two-layer review**: structural SQL review + result-set sanity check before returning results
+### NL2SQL 自动纠错
+- 针对不同数据库方言（SQLite / MySQL / PostgreSQL）的差异化 Few-shot 提示词
+- **Reflection 纠错环**：SQL 执行失败时，将错误信息反馈给 LLM 自动修复（最多 N 次重试）
+- **双层审查机制**：SQL 结构语义审查 + 结果集合理性校验
 
-### Multi-Database Support
-- SQLite, MySQL, and PostgreSQL via a unified MCP (Model Context Protocol) server
-- Database-specific SQL dialect rules injected into prompts
-- Cross-DB evaluation framework with 99 test cases
+### 多数据库支持
+- 通过统一 MCP（模型上下文协议）服务器支持 SQLite、MySQL、PostgreSQL
+- 提示词自动注入数据库方言规则
+- 跨库一致性评测框架，99 道测试用例
 
-### SQL Result Cache
-- SQLite-persisted cache with 5-round TTL (hit refreshes TTL to 5)
-- Cache inventory injected into MasterAgent only (never into sql_agent prompts — keeps SQL generation clean)
-- MasterAgent dispatches on cache hits: EXACT match skips SQL agent entirely, PARTIAL match feeds cached data to analysis/search
-- 2x speedup on repeated queries
+### SQL 结果缓存
+- 基于 SQLite 的持久化缓存，TTL 为 5 轮对话（命中刷新 TTL）
+- 缓存清单仅注入 MasterAgent（不污染 SQL 生成 prompt）
+- MasterAgent 智能调度：EXACT 命中跳过 SQL Agent 直接汇总，PARTIAL 命中将缓存数据传给分析/搜索 Agent
+- 重复查询提速 2 倍
 
-### Web Search & Cross-Reference
-- Tavily API integration for internet search
-- **search_and_sql** mode: compares internal database results against industry/ market data
-- Graceful degradation when Tavily key is not configured
+### 联网搜索与内外对比
+- 集成 Tavily API 进行互联网搜索
+- **search_and_sql 模式**：将公司内部数据与行业/市场数据进行对比分析
+- 未配置搜索密钥时自动降级，不影响其他功能
 
-### Dual-Layer Memory
-- **Short-term**: conversation compression when messages exceed threshold (token-based, LLM-powered summarization)
-- **Long-term**: SQLite-backed persistent user preferences and knowledge extraction (auto-triggered after 6 rounds)
+### 双层记忆系统
+- **短期记忆**：对话轮次/Token 超阈值时自动触发 LLM 压缩总结
+- **长期记忆**：SQLite 持久化用户偏好与知识，6 轮对话后自动提取
 
-### Streaming Output (SSE)
-7 event types streamed in real-time: `status`, `intent`, `sql`, `sources`, `chart`, `chunk`, `done`
+### 流式输出（SSE）
+7 种事件实时推送：`status`、`intent`、`sql`、`sources`、`chart`、`chunk`、`done`
 
-### Web UI
-Built-in Flask web interface with ECharts visualization, Markdown rendering, syntax highlighting, and streaming typewriter effect.
+### Web 前端
+内置 Flask Web 界面，支持 ECharts 图表渲染、Markdown 渲染、代码高亮、流式打字效果。
 
-### Evaluation Framework
-- 99 curated test cases across 7 categories (intent recognition, SQL generation, end-to-end, error handling, execution accuracy, exact match, result overlap)
-- Mock mode for fast iteration (no API cost) and live mode for real LLM evaluation
-- Quantitative metrics: Jaccard similarity, result overlap ratio, exact match rate
-- Cross-DB consistency testing (same question across SQLite / MySQL / PostgreSQL)
+### 评测框架
+- 99 道测试用例，覆盖 7 大类别（意图识别、SQL 生成、端到端、错误处理、执行准确率、精确匹配、结果集重叠率）
+- Mock 模式（零 API 消耗快速验证）+ Live 模式（真实 LLM 评估）
+- 定量指标：Jaccard 相似度、结果集重叠率、精确匹配率
+- 跨库一致性测试
 
-## Quick Start
+## 快速开始
 
-### 1. Clone and install dependencies
+### 1. 克隆项目并安装依赖
 
 ```bash
-git clone https://github.com/your-username/multi-agent-query.git
-cd multi-agent-query
+git clone https://github.com/King-zege/Multi-Agent-Data-Query-System.git
+cd Multi-Agent-Data-Query-System
 pip install -r requirements.txt
 ```
 
-### 2. Set up API keys
+### 2. 配置 API Key
 
 ```bash
-# Copy the example environment file and fill in your keys
+# 复制环境变量模板文件，然后填入你的 Key
 cp .env.example .env          # Linux / macOS
 copy .env.example .env        # Windows
 ```
 
-Edit `.env` and fill in your API keys:
+编辑 `.env` 文件，填入你的 API Key：
 
 ```env
-LLM_API_KEY="your_api_key_here"      # Required
-TAVILY_API_KEY="your_tavily_key_here" # Optional (web search)
+LLM_API_KEY="你的API密钥"                # 必填
+TAVILY_API_KEY="你的Tavily密钥"          # 可选（联网搜索功能）
 ```
 
-The system supports any OpenAI-compatible API. Choose your provider in `config/config.yaml`:
+系统支持任意 OpenAI 兼容接口，在 `config/config.yaml` 中选择你的 LLM 提供商：
 
 ```yaml
 llm:
   provider: "minimax"          # minimax | dashscope | zhipu
   model: "MiniMax-M2.7"
-  api_key: "${LLM_API_KEY}"    # Reads from .env via ${VAR_NAME}
+  api_key: "${LLM_API_KEY}"    # 通过 ${VAR_NAME} 从 .env 读取
   temperature: 0.1
   max_tokens: 2048
 ```
 
-> **Security**: `.env` is in `.gitignore` and will never be committed. Never paste real keys into `config.yaml` — use `${VAR_NAME}` references instead.
+> **安全提醒**：`.env` 已加入 `.gitignore`，不会被提交到 GitHub。切勿将真实 Key 直接写在 `config.yaml` 中，请使用 `${VAR_NAME}` 环境变量引用。
 
-### 3. Initialize databases
+### 3. 初始化数据库
 
 ```bash
-python data/init_db.py          # Business database (company.db)
-python data/init_memory_db.py   # Long-term memory database
+python data/init_db.py          # 业务数据库（公司员工/部门/薪资表）
+python data/init_memory_db.py   # 长期记忆数据库
 ```
 
-### 4. Start the web interface
+### 4. 启动 Web 界面
 
 ```bash
 # Windows
@@ -126,199 +129,198 @@ start_web.bat
 ./start_web.sh
 ```
 
-Open **http://localhost:5000** in your browser.
+浏览器访问 **http://localhost:5000**。
 
-### 5. CLI mode (alternative)
+### 5. 命令行模式（可选）
 
 ```bash
 python agent.py
 ```
 
-Special commands inside the CLI: `new` (fresh session), `info` (user profile), `exit` / `quit`.
+命令行内特殊指令：`new`（开始新会话）、`info`（查看用户信息）、`exit` / `quit`（退出）。
 
-## Configuration
+## 配置说明
 
-Full `config/config.yaml` reference:
+`config/config.yaml` 完整参考：
 
 ```yaml
 llm:
   provider: "minimax"             # minimax | dashscope | zhipu
   model: "MiniMax-M2.7"
-  api_key: "${LLM_API_KEY}"       # Env-var reference (recommended)
+  api_key: "${LLM_API_KEY}"       # 推荐使用环境变量引用
   temperature: 0.1
   max_tokens: 2048
 
 database:
   type: "sqlite"                  # sqlite | mysql | postgresql
-  path: "./data/company.db"       # SQLite path
-  host: "localhost"               # MySQL / PG host
-  port: 3306
+  path: "./data/company.db"       # SQLite 文件路径
+  host: "localhost"               # MySQL / PG 主机
+  port: 3306                      # MySQL=3306, PostgreSQL=5432
   database: "company"
   username: "root"
   password: ""
 
 nl2sql:
-  num_examples: 5                 # Few-shot examples (max 5)
+  num_examples: 5                 # Few-shot 示例数量（最多5个）
 
 memory:
   long_term_db: "./data/long_term_memory.db"
-  short_term_max_tokens: 1000
-  compression_threshold: 10
-  auto_extract_knowledge: true
+  short_term_max_tokens: 1000     # 短期记忆压缩阈值
+  compression_threshold: 10       # 超过10条消息开始压缩
+  auto_extract_knowledge: true    # 自动提取用户知识
 
 search:
-  tavily_api_key: ""              # Leave empty to read from TAVILY_API_KEY env var
-  max_results: 5
+  tavily_api_key: ""              # 留空则从 TAVILY_API_KEY 环境变量读取
+  max_results: 5                  # 单次搜索最大返回结果
 ```
 
-## Project Structure
+## 项目结构
 
 ```
 .
-├── agents/                          # Agent modules
-│   ├── __init__.py
-│   ├── base.py                      # Base agent class
-│   ├── master_agent.py              # Master orchestrator (intent, cache, dispatch)
-│   ├── sql_agent.py                 # NL2SQL agent (generation, self-correction, cache CRUD)
-│   ├── analysis_agent.py            # Data analysis agent (stats, charts)
-│   └── search_agent.py              # Web search agent (Tavily)
-├── memory/                          # Memory system
-│   ├── long_term_memory.py          # SQLite-backed persistent memory
-│   └── memory_extractor.py          # LLM-based knowledge extraction
-├── eval/                            # Evaluation framework
-│   ├── eval_cases_v2.json           # 99 test cases
-│   ├── evaluator.py                 # Eval runner (mock + live modes)
-│   ├── metrics.py                   # Quantitative metrics
-│   ├── reporter.py                  # Report generation
-│   ├── llm_judge.py                 # LLM-as-judge scoring
-│   └── run_eval.py                  # CLI entry point
+├── agents/                          # 智能体模块
+│   ├── base.py                      # 智能体基类
+│   ├── master_agent.py              # 主智能体（意图路由、缓存调度、结果汇总）
+│   ├── sql_agent.py                 # SQL 查询智能体（NL2SQL、纠错、缓存CRUD）
+│   ├── analysis_agent.py            # 数据分析智能体（统计、图表）
+│   └── search_agent.py              # 联网搜索智能体（Tavily）
+├── memory/                          # 记忆系统
+│   ├── long_term_memory.py          # 长期记忆（SQLite 持久化）
+│   └── memory_extractor.py          # LLM 自动提取用户知识
+├── eval/                            # 评测框架
+│   ├── eval_cases_v2.json           # 99 道测试用例
+│   ├── evaluator.py                 # 评测执行器（mock + live 模式）
+│   ├── metrics.py                   # 定量指标计算
+│   ├── reporter.py                  # 评测报告生成
+│   ├── llm_judge.py                 # LLM-as-judge 打分
+│   └── run_eval.py                  # 命令行入口
 ├── config/
-│   └── config.yaml                  # Main configuration
+│   └── config.yaml                  # 主配置文件
 ├── data/
-│   ├── init_db.py                   # Business DB initializer
-│   ├── init_memory_db.py            # Memory DB initializer
-│   └── company.db                   # Sample company database
+│   ├── init_db.py                   # 业务数据库初始化
+│   ├── init_memory_db.py            # 记忆数据库初始化
+│   └── company.db                   # 示例公司数据库
 ├── scripts/
-│   ├── generate_eval_cases.py       # Eval case generator
-│   └── import_falcon.py             # Falcon dataset importer
+│   ├── generate_eval_cases.py       # 评测用例生成器
+│   └── import_falcon.py             # Falcon 数据集导入
 ├── tests/
-│   ├── test_agents/                 # Agent unit tests
-│   ├── test_integration/            # Integration tests
-│   ├── test_memory/                 # Memory system tests
-│   └── test_utils/                  # Test helpers & fake LLM
+│   ├── test_agents/                 # 智能体单元测试
+│   ├── test_integration/            # 集成测试
+│   ├── test_memory/                 # 记忆系统测试
+│   └── test_utils/                  # 测试工具（Fake LLM）
 ├── static/
-│   ├── index.html                   # Web UI
-│   ├── style.css
-│   └── app.js                       # SSE streaming, ECharts rendering
-├── agent.py                         # Main entry: MultiAgentSystem class
-├── app.py                           # Flask REST API server
-├── mcp_sql_server.py                # MCP SQL execution server (multi-DB)
-├── prompts.py                       # All prompt templates
+│   ├── index.html                   # Web 前端页面
+│   ├── style.css                    # 蓝紫渐变主题
+│   └── app.js                       # SSE 流式接收、ECharts 渲染
+├── agent.py                         # 主入口：MultiAgentSystem 类
+├── app.py                           # Flask REST API 服务
+├── mcp_sql_server.py                # MCP SQL 执行服务器（多数据库）
+├── prompts.py                       # 所有提示词模板
 ├── requirements.txt
 └── start_web.sh / start_web.bat
 ```
 
 ## REST API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/login` | POST | User login, returns stored preferences & knowledge |
-| `/api/query` | POST | Blocking query (full response) |
-| `/api/query_stream` | POST | SSE streaming query (recommended for UI) |
-| `/api/new_session` | POST | Start a new conversation session |
-| `/api/user_info` | POST | Get user profile and extracted knowledge |
-| `/api/health` | GET | Health check with feature availability |
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/login` | POST | 用户登录，返回已存储的偏好与知识 |
+| `/api/query` | POST | 阻塞式查询（返回完整回答） |
+| `/api/query_stream` | POST | SSE 流式查询（前端推荐使用） |
+| `/api/new_session` | POST | 创建新会话（清空短期记忆） |
+| `/api/user_info` | POST | 获取用户画像与提取的知识 |
+| `/api/health` | GET | 健康检查，返回各功能可用状态 |
 
-### SSE Event Types
+### SSE 事件类型
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `status` | `{message}` | Current processing step |
-| `intent` | `{intent}` | Classified intent label |
-| `sql` | `{sql, attempt}` | Generated SQL (with retry count) |
-| `sources` | `{labels, urls}` | Web search source URLs |
-| `chart` | `{config}` | ECharts chart configuration JSON |
-| `chunk` | `{content}` | Answer text fragment (typewriter effect) |
-| `done` | `{answer}` | Completion signal with full answer |
+| 事件 | 数据 | 说明 |
+|------|------|------|
+| `status` | `{message}` | 当前处理步骤 |
+| `intent` | `{intent}` | 识别到的意图标签 |
+| `sql` | `{sql, attempt}` | 生成的 SQL 语句（含重试次数） |
+| `sources` | `{labels, urls}` | 联网搜索来源 URL 列表 |
+| `chart` | `{config}` | ECharts 图表配置 JSON |
+| `chunk` | `{content}` | 回答文字流片段（打字机效果） |
+| `done` | `{answer}` | 流结束信号（含完整回答） |
 
-## Evaluation
+## 评测系统
 
-The evaluation framework measures system quality without relying on exact string matching:
+评测框架不依赖字符串精确匹配，而是从语义和结果集层面衡量系统质量：
 
 ```bash
-# Fast mock mode (no API cost, uses pattern matching)
+# 快速 Mock 模式（不消耗 API，模式匹配验证）
 python -m eval.run_eval --mode mock
 
-# Cross-DB consistency test
+# 跨库一致性测试
 python -m eval.run_eval --mode mock --cross-db
 
-# Live LLM evaluation (specific database)
+# 真实 LLM 评估（指定数据库）
 python -m eval.run_eval --mode live --db-type mysql
 
-# All databases
+# 全数据库评估
 python -m eval.run_eval --mode live --db-type all
 
-# Specific category only
+# 仅运行特定类别
 python -m eval.run_eval --mode live --category sql_execution_accuracy
 ```
 
-**7 evaluation categories**: intent recognition, SQL generation, end-to-end, error handling, execution accuracy, exact match, result set overlap.
+**7 大评测类别**：`intent_recognition`、`sql_generation`、`end_to_end`、`error_handling`、`sql_execution_accuracy`、`result_exact_match`、`result_set_overlap`。
 
-## Example Questions
+## 示例问题
 
-**Data queries**
-- "How many employees are in the R&D department? What are their positions?"
-- "Which employees have a base salary above 30,000?"
-- "What is the highest-paid department?"
+**数据查询**
+- 公司总共有多少个部门？每个部门分别在哪个城市？
+- 哪些员工的基本工资超过 30000 元？
+- 哪个部门的平均薪资最高？
 
-**Query + analysis**
-- "Compare average salaries across the R&D, Product, and Design departments"
-- "Find the top 10 highest-paid employees and analyze their department distribution"
+**查询 + 分析**
+- 对比公司研发部、产品部和设计部的平均薪资水平
+- 找出薪资最高的 10 名员工，分析他们的职位和部门分布特征
 
-**Web search**
-- "What is the average salary for software engineers in the internet industry in 2025?"
-- "What are the current trends in AI employment?"
+**联网搜索**
+- 2025 年互联网行业软件工程师的平均薪资是多少？
+- 目前 AI 大模型领域的就业趋势如何？
 
-**Cross-reference (internal + external)**
-- "How does our R&D department salary compare to the industry average?"
-- "Where does our company's compensation structure stand in the industry?"
+**搜索 + SQL 联合对比**
+- 我们公司研发部的薪资水平和行业平均水平相比怎么样？
+- 公司的薪资结构在同行业中处于什么水平？
 
-**Analysis only** (uses cached data when available)
-- "Analyze the last query results for me"
-- "Summarize the salary distribution we just looked at"
+**仅分析**（缓存数据可用时跳过查询）
+- 帮我分析一下上一次查询的数据
+- 总结一下我们刚才看到的薪资分布
 
-## Tech Stack
+## 技术栈
 
-| Layer | Technology |
-|-------|-----------|
-| Agent Orchestration | LangGraph 1.0+ |
-| LLM Interface | LangChain + OpenAI-compatible API |
-| Supported LLMs | MiniMax M2.7, Qwen (DashScope), GLM (Zhipu) |
-| Web Search | Tavily API |
-| Database Protocol | MCP (Model Context Protocol) via FastMCP |
-| Databases | SQLite, MySQL, PostgreSQL (SQLAlchemy) |
-| Web Framework | Flask + Flask-CORS |
-| Frontend | ECharts, marked.js, highlight.js |
-| Logging | Python logging + Rich (terminal) |
+| 层级 | 技术 |
+|------|------|
+| 智能体编排 | LangGraph 1.0+ |
+| LLM 接口 | LangChain + OpenAI 兼容 API |
+| 支持模型 | MiniMax M2.7、Qwen（DashScope）、GLM（Zhipu） |
+| 联网搜索 | Tavily API |
+| 数据库协议 | MCP（Model Context Protocol）via FastMCP |
+| 数据库 | SQLite / MySQL / PostgreSQL（SQLAlchemy） |
+| Web 框架 | Flask + Flask-CORS |
+| 前端 | ECharts、marked.js、highlight.js |
+| 日志 | Python logging + Rich（终端美化） |
 
-## Roadmap
+## 开发计划
 
-- [ ] Parallel agent execution for independent sub-tasks
-- [ ] Report generation agent (PDF / Excel export)
-- [ ] Anomaly detection agent (proactive data monitoring)
-- [ ] Vector-based semantic memory (ChromaDB)
-- [ ] Schema-aware table selection for large databases (>100 tables)
+- [ ] 多智能体并行执行（独立子任务）
+- [ ] 报表生成智能体（PDF / Excel 导出）
+- [ ] 异常检测智能体（主动数据监控）
+- [ ] 向量语义记忆（ChromaDB）
+- [ ] 大数据库场景下的 Schema 智能检索
 
-## Contributing
+## 参与贡献
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you'd like to change.
+欢迎提交 Pull Request。重大修改请先开 Issue 讨论你的想法。
 
-Make sure to run the existing test suite before submitting:
+提交前请确保通过现有测试：
 
 ```bash
 pytest tests/ -v
 ```
 
-## License
+## 许可证
 
-MIT — see the [LICENSE](LICENSE) file for details.
+MIT — 详见 [LICENSE](LICENSE) 文件。
