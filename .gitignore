@@ -54,5 +54,12 @@ htmlcov/
 nosetests.xml
 coverage.xml
 
+# ===== 项目文档（仅本地保留）=====
+项目介绍/
+技术面.md
+简洁项目简历.md
+项目简历.md
+怎么跑项目.md
+
 # ===== 实验日志 =====
 swanlab/
