@@ -5,6 +5,8 @@ Flask Web API for Multi-Agent Data Query System
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 from flask_cors import CORS
+from dotenv import load_dotenv
+load_dotenv()
 import os
 import sys
 import json
@@ -227,8 +229,9 @@ def health():
 
 if __name__ == '__main__':
     # 检查环境变量
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        logger.critical("未设置 DASHSCOPE_API_KEY 环境变量")
+    if not os.getenv("LLM_API_KEY"):
+        logger.critical("未设置 LLM_API_KEY 环境变量")
+        logger.critical("请复制 .env.example 为 .env 并填入你的 API Key")
         sys.exit(1)
     
     logger.info("多智能体数据查询系统 Web API 启动中...")

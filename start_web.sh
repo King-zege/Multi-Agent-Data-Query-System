@@ -6,11 +6,10 @@ echo "====================================="
 echo
 
 # 检查环境变量
-if [ -z "$DASHSCOPE_API_KEY" ]; then
-    echo "[错误] 未设置 DASHSCOPE_API_KEY 环境变量"
+if [ -z "$LLM_API_KEY" ]; then
+    echo "[错误] 未设置 LLM_API_KEY 环境变量"
     echo
-    echo "请先设置环境变量："
-    echo "export DASHSCOPE_API_KEY=your_api_key"
+    echo "请复制 .env.example 为 .env 并填入你的 API Key"
     echo
     exit 1
 fi

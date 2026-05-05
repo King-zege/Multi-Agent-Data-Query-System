@@ -6,11 +6,10 @@ echo =====================================
 echo.
 
 REM 检查环境变量
-if "%DASHSCOPE_API_KEY%"=="" (
-    echo [错误] 未设置 DASHSCOPE_API_KEY 环境变量
+if "%LLM_API_KEY%"=="" (
+    echo [错误] 未设置 LLM_API_KEY 环境变量
     echo.
-    echo 请先设置环境变量：
-    echo set DASHSCOPE_API_KEY=your_api_key
+    echo 请复制 .env.example 为 .env 并填入你的 API Key
     echo.
     pause
     exit /b 1

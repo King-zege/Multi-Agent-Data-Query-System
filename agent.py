@@ -16,6 +16,9 @@ import os
 import uuid
 from typing import Dict, Any
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models import BaseLLM, BaseChatModel
 import yaml
@@ -82,13 +85,29 @@ class MultiAgentSystem:
     
     def _init_llm(self) -> BaseChatModel:
         """初始化语言模型
-        
-        使用 OpenAI 兼容接口连接 DashScope，支持所有通义千问模型
-        （qwen-turbo-latest / qwen-plus-latest / qwen-max-latest / qwen3.5-plus 等）
+
+        支持多种 LLM Provider（通过 OpenAI 兼容接口）：
+        - zhipu: 智谱 GLM 系列（默认 base_url: https://open.bigmodel.cn/api/paas/v4/）
+        - dashscope: 阿里百炼/通义千问系列
+        - minimax: MiniMax M2 系列（默认 base_url: https://api.minimax.chat/v1）
         """
         llm_config = self.config["llm"]
         
-        if llm_config["provider"] == "dashscope":
+        if llm_config["provider"] == "zhipu":
+            base_url = llm_config.get(
+                "base_url",
+                "https://open.bigmodel.cn/api/paas/v4/"
+            )
+            return ChatOpenAI(
+                model=llm_config["model"],
+                api_key=llm_config["api_key"],
+                base_url=base_url,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                max_retries=1,
+                request_timeout=30,
+            )
+        elif llm_config["provider"] == "dashscope":
             base_url = llm_config.get(
                 "base_url",
                 "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -99,7 +118,22 @@ class MultiAgentSystem:
                 base_url=base_url,
                 temperature=llm_config["temperature"],
                 max_tokens=llm_config["max_tokens"],
-                streaming=True,
+                max_retries=1,
+                request_timeout=30,
+            )
+        elif llm_config["provider"] == "minimax":
+            base_url = llm_config.get(
+                "base_url",
+                "https://api.minimax.chat/v1"
+            )
+            return ChatOpenAI(
+                model=llm_config["model"],
+                api_key=llm_config["api_key"],
+                base_url=base_url,
+                temperature=llm_config["temperature"],
+                max_tokens=llm_config["max_tokens"],
+                max_retries=1,
+                request_timeout=30,
             )
         else:
             raise ValueError(f"Unsupported LLM provider: {llm_config['provider']}")
@@ -212,8 +246,9 @@ def main():
     ))
     console.print()
     
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        console.print("[red]错误：未设置 DASHSCOPE_API_KEY 环境变量[/red]")
+    if not os.getenv("LLM_API_KEY"):
+        console.print("[red]错误：未设置 LLM_API_KEY 环境变量[/red]")
+        console.print("[dim]请复制 .env.example 为 .env 并填入你的 API Key[/dim]")
         return
     
     # 初始化系统

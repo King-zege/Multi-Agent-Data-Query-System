@@ -1,8 +1,8 @@
 # 大模型配置
 llm:
-  provider: "dashscope"
-  model: "qwen3.5-flash-2026-02-23"
-  api_key: "sk-5dee60e2eff1454aa2cb084a9a5f5df9"
+  provider: "minimax"
+  model: "MiniMax-M2.7"
+  api_key: "${LLM_API_KEY}"
   temperature: 0.1
   max_tokens: 2048
 
@@ -23,7 +23,7 @@ database:
 
 # NL2SQL配置
 nl2sql:
-  num_examples: 3   # Few-shot示例数量
+  num_examples: 5   # Few-shot示例数量
 
 # 记忆配置
 memory:
@@ -34,5 +34,5 @@ memory:
 
 # 联网搜索配置（DeepSearch）
 search:
-  tavily_api_key: "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"  # Tavily API Key
+  tavily_api_key: "${TAVILY_API_KEY}"  # Leave empty or set TAVILY_API_KEY env var
   max_results: 5  # 每次搜索返回最大结果数
